@@ -1,0 +1,364 @@
+#include "platform/menu_view.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
+
+namespace {
+constexpr SDL_Color kPanel{0x17, 0x1c, 0x28, 255};
+constexpr SDL_Color kAmber{0xf5, 0xb5, 0x44, 255};
+constexpr SDL_Color kAmberSoft{0xf5, 0xb5, 0x44, 40};
+constexpr SDL_Color kText{0xe8, 0xeb, 0xf2, 255};
+constexpr SDL_Color kMuted{0x5b, 0x64, 0x78, 255};
+constexpr SDL_Color kTitle{0x9a, 0xa3, 0xb8, 255};
+constexpr int kScreenW = 1280, kScreenH = 720;
+constexpr int kPanelW = 560, kRow = 68, kPad = 28;
+constexpr int kMenuW = 460, kSheetTop = 40, kIconPx = 32;
+constexpr Uint32 kSlideMs = 180;
+
+bool inBox(float u, float v, float x0, float y0, float x1, float y1) {
+    return u >= x0 && u <= x1 && v >= y0 && v <= y1;
+}
+
+bool inTri(float u, float v, float ax, float ay, float bx, float by, float cx, float cy) {
+    const auto side = [&](float x0, float y0, float x1, float y1) {
+        return (x1 - x0) * (v - y0) - (y1 - y0) * (u - x0);
+    };
+    const float a = side(ax, ay, bx, by), b = side(bx, by, cx, cy), c = side(cx, cy, ax, ay);
+    return (a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0);
+}
+
+bool inTray(float u, float v) {
+    return inBox(u, v, -.8f, .4f, -.6f, .8f) || inBox(u, v, .6f, .4f, .8f, .8f) ||
+           inBox(u, v, -.8f, .6f, .8f, .8f);
+}
+
+// Whether a point of the icon is filled; u and v go from -1 to 1, v down.
+bool iconCovers(MenuItem icon, float u, float v) {
+    switch (icon) {
+        case MenuItem::Continue:
+            return inTri(u, v, -.55f, -.75f, -.55f, .75f, .8f, 0);
+        case MenuItem::SaveState:  // an arrow into a tray
+            return inTray(u, v) || inBox(u, v, -.13f, -.85f, .13f, .05f) ||
+                   inTri(u, v, -.5f, 0, .5f, 0, 0, .5f);
+        case MenuItem::LoadState:  // an arrow out of it
+            return inTray(u, v) || inBox(u, v, -.13f, -.3f, .13f, .4f) ||
+                   inTri(u, v, -.5f, -.25f, .5f, -.25f, 0, -.85f);
+        case MenuItem::Video:  // a screen on a stand
+            return (inBox(u, v, -.9f, -.75f, .9f, .45f) && !inBox(u, v, -.72f, -.57f, .72f, .27f)) ||
+                   inBox(u, v, -.12f, .45f, .12f, .65f) || inBox(u, v, -.45f, .62f, .45f, .8f);
+        case MenuItem::Disc: {  // a disc with its centre hole
+            const float r2 = u * u + v * v;
+            return r2 <= .85f * .85f && r2 >= .22f * .22f;
+        }
+        case MenuItem::Exit:  // an arrow out of a door
+            return inBox(u, v, -.85f, -.85f, -.65f, .85f) || inBox(u, v, -.85f, -.85f, -.05f, -.65f) ||
+                   inBox(u, v, -.85f, .65f, -.05f, .85f) || inBox(u, v, -.3f, -.12f, .4f, .12f) ||
+                   inTri(u, v, .3f, -.5f, .3f, .5f, .9f, 0);
+    }
+    return false;
+}
+}  // namespace
+
+Lang systemLang() {
+#ifdef __SWITCH__
+    Lang lang = Lang::EnUS;
+    if (R_SUCCEEDED(setInitialize())) {
+        u64 code = 0;
+        SetLanguage sl;
+        if (R_SUCCEEDED(setGetSystemLanguage(&code)) && R_SUCCEEDED(setMakeLanguage(code, &sl))) {
+            if (sl == SetLanguage_PTBR || sl == SetLanguage_PT) lang = Lang::PtBR;
+        }
+        setExit();
+    }
+    return lang;
+#else
+    return Lang::EnUS;
+#endif
+}
+
+MenuView::~MenuView() { shutdown(); }
+
+bool MenuView::init(SDL_Renderer* renderer) {
+    r_ = renderer;
+    if (TTF_Init() != 0) {
+        std::fprintf(stderr, "TTF_Init failed: %s\n", TTF_GetError());
+        return false;
+    }
+    ttf_ = true;
+#ifdef __SWITCH__
+    PlFontData pf{};
+    if (R_SUCCEEDED(plInitialize(PlServiceType_User)) &&
+        R_SUCCEEDED(plGetSharedFontByType(&pf, PlSharedFontType_Standard)) && pf.address) {
+        fontData_.assign(static_cast<const char*>(pf.address), pf.size);
+    } else {
+        std::fprintf(stderr, "shared system font unavailable; menu text will not draw\n");
+    }
+#else
+    std::fprintf(stderr, "no system font on this platform; menu text will not draw\n");
+#endif
+    return !fontData_.empty();
+}
+
+void MenuView::shutdown() {
+    for (auto& [k, c] : cache_)
+        if (c.tex) SDL_DestroyTexture(c.tex);
+    cache_.clear();
+    for (auto& [k, f] : fonts_)
+        if (f) TTF_CloseFont(f);
+    fonts_.clear();
+    if (ttf_) {
+        TTF_Quit();
+        ttf_ = false;
+#ifdef __SWITCH__
+        plExit();
+#endif
+    }
+    fontData_.clear();
+}
+
+void MenuView::setScreenHeight(int h) {
+    const float s = h > 0 ? h / float(kScreenH) : 1.0f;
+    if (s == scale_) return;
+    scale_ = s;
+    // Text textures were rendered for the old size.
+    for (auto& [k, c] : cache_)
+        if (c.tex) SDL_DestroyTexture(c.tex);
+    cache_.clear();
+}
+
+MenuView::Scaled::Scaled(const MenuView& v) : r_(v.r_) { SDL_RenderSetScale(r_, v.scale_, v.scale_); }
+MenuView::Scaled::~Scaled() { SDL_RenderSetScale(r_, 1.0f, 1.0f); }
+
+int MenuView::screenPx(int px) const { return static_cast<int>(std::lround(px * scale_)); }
+
+// Fonts open at the screen's pixel size, so docked text is rendered at 1080p, not enlarged.
+TTF_Font* MenuView::font(int px) {
+    if (fontData_.empty()) return nullptr;
+    const int sp = screenPx(px);
+    auto it = fonts_.find(sp);
+    if (it != fonts_.end()) return it->second;
+    SDL_RWops* rw = SDL_RWFromConstMem(fontData_.data(), static_cast<int>(fontData_.size()));
+    TTF_Font* f = rw ? TTF_OpenFontRW(rw, 1, sp) : nullptr;
+    if (!f) std::fprintf(stderr, "TTF_OpenFontRW(%d) failed: %s\n", sp, TTF_GetError());
+    fonts_[sp] = f;
+    return f;
+}
+
+const MenuView::Cached* MenuView::text(const std::string& s, int px, SDL_Color c) {
+    if (s.empty()) return nullptr;
+    char key[32];
+    std::snprintf(key, sizeof key, "%d|%02x%02x%02x|", px, c.r, c.g, c.b);
+    const std::string k = std::string(key) + s;
+    auto it = cache_.find(k);
+    if (it != cache_.end()) return it->second.tex ? &it->second : nullptr;
+    // Messages are few and fixed; the bound only guards against an odd game title churn.
+    if (cache_.size() > 64) {
+        for (auto& [kk, cc] : cache_)
+            if (cc.tex) SDL_DestroyTexture(cc.tex);
+        cache_.clear();
+    }
+    Cached out;
+    if (TTF_Font* f = font(px)) {
+        if (SDL_Surface* surf = TTF_RenderUTF8_Blended(f, s.c_str(), c)) {
+            out.tex = SDL_CreateTextureFromSurface(r_, surf);
+            out.w = surf->w;
+            out.h = surf->h;
+            SDL_FreeSurface(surf);
+        }
+    }
+    auto& slot = cache_[k] = out;
+    return slot.tex ? &slot : nullptr;
+}
+
+int MenuView::textWidth(const std::string& s, int px) {
+    int w = 0, h = 0;
+    if (TTF_Font* f = font(px)) TTF_SizeUTF8(f, s.c_str(), &w, &h);
+    return static_cast<int>(std::ceil(w / scale_));
+}
+
+std::string MenuView::fit(const std::string& s, int px, int maxW) {
+    if (textWidth(s, px) <= maxW) return s;
+    std::string t = s;
+    while (!t.empty()) {
+        size_t n = t.size() - 1;  // drop one whole UTF-8 character
+        while (n > 0 && (static_cast<unsigned char>(t[n]) & 0xC0) == 0x80) --n;
+        t.resize(n);
+        if (textWidth(t + "...", px) <= maxW) break;
+    }
+    return t + "...";
+}
+
+void MenuView::drawText(const std::string& s, int px, SDL_Color c, int x, int y, int align) {
+    const Cached* t = text(s, px, c);
+    if (!t) return;
+    // The texture is in screen pixels: place it on whole screen pixels so it copies 1:1.
+    const float w = t->w / scale_, h = t->h / scale_;
+    float dx = static_cast<float>(x);
+    if (align == 1) dx -= w / 2;
+    else if (align == 2) dx -= w;
+    const auto snap = [&](float v) { return std::round(v * scale_) / scale_; };
+    const SDL_FRect dst{snap(dx), snap(static_cast<float>(y)), w, h};
+    SDL_RenderCopyF(r_, t->tex, nullptr, &dst);
+}
+
+// Rounded rectangle: a middle band plus one inset scanline per corner row.
+void MenuView::fillRound(int x, int y, int w, int h, int r, SDL_Color c) {
+    r = std::min({r, w / 2, h / 2});
+    SDL_SetRenderDrawBlendMode(r_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(r_, c.r, c.g, c.b, c.a);
+    const SDL_Rect mid{x, y + r, w, h - 2 * r};
+    SDL_RenderFillRect(r_, &mid);
+    for (int i = 0; i < r; ++i) {
+        const double dy = r - i - 0.5;
+        const int inset = r - static_cast<int>(std::lround(std::sqrt(double(r) * r - dy * dy)));
+        const SDL_Rect top{x + inset, y + i, w - 2 * inset, 1};
+        const SDL_Rect bot{x + inset, y + h - 1 - i, w - 2 * inset, 1};
+        SDL_RenderFillRect(r_, &top);
+        SDL_RenderFillRect(r_, &bot);
+    }
+}
+
+void MenuView::badgeA(int cx, int cy, int r) {
+    fillRound(cx - r, cy - r, 2 * r, 2 * r, r, kAmber);
+    drawText("A", r * 3 / 2, kPanel, cx, cy - r * 3 / 4 - 2, 1);
+}
+
+void MenuView::drawMenu(const Menu& menu, const std::string& gameTitle, Lang lang) {
+    const Scaled scaled(*this);
+    SDL_SetRenderDrawBlendMode(r_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(r_, 0, 0, 0, 170);
+    const SDL_Rect all{0, 0, kScreenW, kScreenH};
+    SDL_RenderFillRect(r_, &all);
+
+    const int px = sheetLeft(kMenuW);
+    fillRound(px, 0, kMenuW, kScreenH, 0, kPanel);
+
+    drawText(fit(gameTitle, 26, kMenuW - 2 * kPad), 26, kTitle, px + kPad, kSheetTop);
+
+    const Str labels[6] = {Str::Continue, Str::SaveState, Str::LoadState, Str::Video, Str::DiscOf, Str::Exit};
+    int y = kSheetTop + 64;
+    for (int i = 0; i < 6; ++i) {
+        const auto item = static_cast<MenuItem>(i);
+        if (!menu.shown(item)) continue;
+        const bool disabled = item == MenuItem::LoadState && !menu.hasState();
+        const bool sel = menu.selected() == item;
+        const SDL_Color c = disabled ? kMuted : (sel ? kAmber : kText);
+        if (sel) fillRound(px + 12, y, kMenuW - 24, kRow - 8, 10, kAmberSoft);
+        drawIcon(item, px + kPad + 24, y + (kRow - 8) / 2, kIconPx, c);
+        std::string label = tr(lang, labels[i]);
+        if (item == MenuItem::Disc) {
+            char buf[64];
+            std::snprintf(buf, sizeof buf, label.c_str(), menu.disc() + 1, menu.discCount());
+            label = buf;
+        }
+        drawText(label, 30, c, px + kPad + 60, y + 10);
+        y += kRow;
+    }
+}
+
+int MenuView::sheetLeft(int width) {
+    const Uint32 now = SDL_GetTicks();
+    if (now - sheetDrawnAt_ > 100) sheetOpenedAt_ = now;
+    sheetDrawnAt_ = now;
+    const float t = std::min(1.0f, (now - sheetOpenedAt_) / float(kSlideMs));
+    const float eased = 1 - (1 - t) * (1 - t) * (1 - t);
+    return kScreenW - static_cast<int>(std::lround(width * eased));
+}
+
+// Drawn once per size with 4x4 samples per pixel, white, and tinted when used.
+void MenuView::drawIcon(MenuItem icon, int cx, int cy, int size, SDL_Color c) {
+    const int n = screenPx(size);
+    const std::string key = "icon|" + std::to_string(static_cast<int>(icon)) + "|" + std::to_string(n);
+    auto it = cache_.find(key);
+    if (it == cache_.end()) {
+        Cached out;
+        if (SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, n, n, 32, SDL_PIXELFORMAT_RGBA32)) {
+            SDL_LockSurface(surf);
+            for (int y = 0; y < n; ++y) {
+                auto* row = reinterpret_cast<Uint32*>(static_cast<Uint8*>(surf->pixels) + y * surf->pitch);
+                for (int x = 0; x < n; ++x) {
+                    int hits = 0;
+                    for (int j = 0; j < 4; ++j)
+                        for (int i = 0; i < 4; ++i)
+                            hits += iconCovers(icon, (x + (i + .5f) / 4) * 2 / n - 1,
+                                               (y + (j + .5f) / 4) * 2 / n - 1);
+                    row[x] = SDL_MapRGBA(surf->format, 255, 255, 255, static_cast<Uint8>(hits * 255 / 16));
+                }
+            }
+            SDL_UnlockSurface(surf);
+            out.tex = SDL_CreateTextureFromSurface(r_, surf);
+            if (out.tex) SDL_SetTextureBlendMode(out.tex, SDL_BLENDMODE_BLEND);
+            out.w = out.h = n;
+            SDL_FreeSurface(surf);
+        }
+        it = cache_.emplace(key, out).first;
+    }
+    if (!it->second.tex) return;
+    SDL_SetTextureColorMod(it->second.tex, c.r, c.g, c.b);
+    const SDL_FRect dst{cx - size / 2.0f, cy - size / 2.0f, float(size), float(size)};
+    SDL_RenderCopyF(r_, it->second.tex, nullptr, &dst);
+}
+
+void MenuView::drawVideoMenu(const VideoMenu& menu, Lang lang) {
+    const Scaled scaled(*this);
+    constexpr int kTitleH = 64, kRows = 6, kValuePx = 28;
+    const int px = sheetLeft(kPanelW);
+    fillRound(px, 0, kPanelW, kScreenH, 0, kPanel);
+    drawText(tr(lang, Str::VideoTitle), 26, kTitle, px + kPad, kSheetTop);
+
+    const VideoSettings& s = menu.settings();
+    const Str values[4] = {label(s.size), label(s.smooth), label(s.filter), label(s.border)};
+    const Str names[kRows] = {Str::Size, Str::Smoothing, Str::Filter, Str::Border, Str::UseDefault, Str::Back};
+    const int right = px + kPanelW - kPad - 8;
+    int y = kSheetTop + kTitleH;
+    for (int i = 0; i < kRows; ++i, y += kRow) {
+        const auto row = static_cast<VideoRow>(i);
+        const bool enabled = menu.rowEnabled(row);
+        const bool sel = menu.cursor() == row;
+        if (sel) fillRound(px + 12, y, kPanelW - 24, kRow - 8, 10, kAmberSoft);
+        drawText(tr(lang, names[i]), 30, enabled ? (sel ? kAmber : kText) : kMuted, px + kPad + 8, y + 9);
+        if (i >= 4) continue;  // Use default, Back: buttons, no value
+        if (!enabled) {
+            drawText("—", kValuePx, kMuted, right, y + 11, 2);
+            continue;
+        }
+        // "‹ value ›"; the arrows light up on the current row.
+        const SDL_Color arrow = sel ? kAmber : kMuted;
+        const std::string value = tr(lang, values[i]);
+        const int valueRight = right - 26;
+        drawText("›", kValuePx, arrow, right, y + 11, 2);
+        drawText(value, kValuePx, kText, valueRight, y + 11, 2);
+        drawText("‹", kValuePx, arrow, valueRight - textWidth(value, kValuePx) - 14, y + 11, 2);
+    }
+}
+
+void MenuView::drawToast(const std::string& msg) {
+    const Scaled scaled(*this);
+    const int w = std::max(240, textWidth(msg, 28) + 64), h = 56;
+    const int y = kScreenH - h - 40;
+    fillRound((kScreenW - w) / 2, y, w, h, 12, SDL_Color{0x17, 0x1c, 0x28, 235});
+    drawText(msg, 28, kText, kScreenW / 2, y + 8, 1);
+}
+
+void MenuView::drawError(const std::string& message, bool withBack, Lang lang) {
+    const Scaled scaled(*this);
+    SDL_SetRenderDrawColor(r_, 0x0d, 0x10, 0x18, 255);
+    SDL_RenderClear(r_);
+    const int w = 900, h = withBack ? 260 : 190;
+    const int px = (kScreenW - w) / 2, py = (kScreenH - h) / 2;
+    fillRound(px, py, w, h, 12, kPanel);
+    drawText(fit(message, 34, w - 2 * kPad), 34, kText, kScreenW / 2, py + 52, 1);
+    if (withBack) {
+        const std::string label = tr(lang, Str::BackToEquinox);
+        const int lw = textWidth(label, 30);
+        const int x0 = (kScreenW - (44 + lw)) / 2;
+        badgeA(x0 + 18, py + 188, 18);
+        drawText(label, 30, kAmber, x0 + 44, py + 168);
+    }
+}
