@@ -25,10 +25,14 @@ list(FILTER EQX_LOGIC_SRC EXCLUDE REGEX "/src/platform/")
 # core.cpp calls into the libretro core, which is only linked for the Switch.
 list(FILTER EQX_LOGIC_SRC EXCLUDE REGEX "/src/core\\.cpp$")
 
+# Vendored miniz (MIT) writes the savestate pictures: memory APIs only, no zlib-name clashes.
+add_compile_definitions(MINIZ_NO_STDIO MINIZ_NO_TIME MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
+set(EQX_MINIZ_SRC ${CMAKE_CURRENT_SOURCE_DIR}/extern/miniz/miniz.c)
+
 if (EQX_HOST_TESTS)
     enable_testing()
     file(GLOB EQX_TEST_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
-    add_executable(eqx_tests ${EQX_LOGIC_SRC} ${EQX_TEST_SRC})
+    add_executable(eqx_tests ${EQX_LOGIC_SRC} ${EQX_MINIZ_SRC} ${EQX_TEST_SRC})
     target_include_directories(eqx_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/extern)
@@ -45,7 +49,7 @@ if (NINTENDO_SWITCH)
 
     set(PORTLIBS_SWITCH /opt/devkitpro/portlibs/switch)
 
-    add_executable(equinox-pcsx-rearmed ${EQX_ALL_SRC})
+    add_executable(equinox-pcsx-rearmed ${EQX_ALL_SRC} ${EQX_MINIZ_SRC})
     target_link_directories(equinox-pcsx-rearmed PRIVATE ${PORTLIBS_SWITCH}/lib)
     target_include_directories(equinox-pcsx-rearmed PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src

@@ -12,6 +12,7 @@ the Equinox app (a Moonlight fork) to play PlayStation games.
   distributed separately from Equinox and is not bundled with it.
 - The frontend (the code in `src/`, `tests/`, `docker/`, `tools/`): this repository
   is MIT (see `LICENSE`), which is compatible with the GPL v2 the combined `.nro` falls under.
+- `extern/miniz` is MIT (see `extern/miniz/LICENSE`); it writes the savestate pictures.
 
 ## Build
 
