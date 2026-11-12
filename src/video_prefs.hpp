@@ -6,11 +6,12 @@
 
 enum class Size { Original, Aspect87, Aspect43, Full };
 enum class Smooth { Pixel, Sharp, Soft };
-enum class Filter { None, Scanlines, Ntsc };
+enum class Filter { None, Scanlines, Ntsc, ZfastCrt, CrtEasymode, CrtLottes, CrtHyllian, CrtGeom };
+inline constexpr int kFilterCount = 8;
+// How strong a shader filter is; Medium is the shader's own defaults.
+enum class Intensity { Light, Medium, Strong };
 enum class Border { Equinox, Cover, Tv, Black };
 
-// The NTSC filter is drawn by Snes9x; PCSX ReARMed has none.
-inline constexpr bool kNtscEnabled = false;
 // 8:7 is the SNES picture; PlayStation games are drawn for a 4:3 TV.
 inline constexpr bool kAspect87Enabled = false;
 
@@ -20,8 +21,9 @@ struct VideoPrefs {
     std::optional<Smooth> smooth;
     std::optional<Filter> filter;
     std::optional<Border> border;
+    std::optional<Intensity> intensity;
 
-    bool empty() const { return !size && !smooth && !filter && !border; }
+    bool empty() const { return !size && !smooth && !filter && !border && !intensity; }
 };
 
 // Everything resolved; the initializers are the defaults.
@@ -30,6 +32,7 @@ struct VideoSettings {
     Smooth smooth = Smooth::Pixel;
     Filter filter = Filter::None;
     Border border = Border::Equinox;
+    Intensity intensity = Intensity::Medium;
 
     bool operator==(const VideoSettings&) const = default;
 };
@@ -60,3 +63,4 @@ const char* toId(Size);
 const char* toId(Smooth);
 const char* toId(Filter);
 const char* toId(Border);
+const char* toId(Intensity);

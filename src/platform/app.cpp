@@ -559,6 +559,10 @@ int main(int argc, char** argv) {
         if (nxlinkStdio() < 0) socketExit();
     }
 
+    // The shader filters are read from romfs; without it the game still runs, unfiltered.
+    const bool romfs = R_SUCCEEDED(romfsInit());
+    if (!romfs) std::fprintf(stderr, "romfsInit failed: shader filters are off\n");
+
     std::optional<LaunchArgs> args;
     try {
         args = parseArgs(argc, argv);
@@ -589,5 +593,6 @@ int main(int argc, char** argv) {
     }
     if (window) SDL_DestroyWindow(window);
     SDL_Quit();
+    if (romfs) romfsExit();
     return 0;
 }
