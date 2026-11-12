@@ -48,6 +48,14 @@ constexpr Pair kTable[] = {
     {"Não deu para guardar o ajuste", "Could not save the setting"},
     {"Disco trocado", "Disc changed"},
     {"Não deu para trocar o disco", "Could not change the disc"},
+    {"Escolher", "Choose"},
+    {"Voltar ao jogo", "Back to the game"},
+    {"Trocar", "Change"},
+    {"Último estado salvo", "Last saved state"},
+    {"As mudanças aparecem no jogo enquanto você escolhe", "Changes show on the game as you choose"},
+    {"A imagem do jogo, sem efeito", "The game's picture, untouched"},
+    {"Linhas escuras entre as linhas da imagem", "Dark lines between the picture's lines"},
+    {"Cores e borrões do sinal de TV antigo", "The color bleed of an old TV signal"},
 };
 }  // namespace
 

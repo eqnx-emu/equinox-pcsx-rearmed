@@ -21,6 +21,10 @@ TEST_CASE("state path") {
     CHECK(statePath("/st", "/r/Game.chd") == "/st/Game.state");
 }
 
+TEST_CASE("the state thumbnail sits beside the state") {
+    CHECK(stateThumbPath("/st", "/r/Game.chd") == "/st/Game.state.png");
+}
+
 TEST_CASE("video prefs path uses the disc file name") {
     CHECK(videoPrefsPath("sdmc:/s", "sdmc:/r/Chrono Cross (USA).cue") ==
           "sdmc:/s/Chrono Cross (USA).video.json");
