@@ -75,7 +75,7 @@ argument line (protocol version 1):
 | `--rom`      | yes      | Path of the disc image to run (see Games and BIOS). |
 | `--title`    | no       | Display name of the game. |
 | `--saves`    | no       | Directory for memory cards (`<disc stem>.srm`, memory card 1). |
-| `--states`   | no       | Directory for save states. |
+| `--states`   | no       | Directory for save states. Saving a state also writes a small picture of the game beside it (`<stem>.state.png`), shown in the pause menu. |
 | `--return`   | yes      | Path of the Equinox `.nro` to reopen on exit. |
 | `--resume`   | no       | Opaque token. The runner never interprets it; Equinox decides what it holds (screen, filter, game) and gets it back unchanged. |
 | `--cover`    | no       | PNG of the game cover, used by the `cover` border. Without it, `cover` falls back to `equinox`. |
