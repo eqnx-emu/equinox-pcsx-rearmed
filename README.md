@@ -62,9 +62,9 @@ Plus = Start, Minus = Select. The D-pad is the D-pad and the sticks are the anal
 sticks; L1 + R1 + Select switches the pad's analog mode, as on the DualShock's ANALOG
 button. Two players are supported.
 
-Minus and Plus together open the pause menu (ZL + ZR are L2 + R2 here, so they cannot
-be the menu combo the other Equinox runners use). Touching the screen, or player 1's
-pad disconnecting, also opens it.
+Minus and Plus together open the pause menu, as in every Equinox runner; the game gets
+neither Select nor Start until both are released. Either one alone reaches the game.
+Touching the screen, or player 1's pad disconnecting, also opens it.
 
 ## Protocol
 
