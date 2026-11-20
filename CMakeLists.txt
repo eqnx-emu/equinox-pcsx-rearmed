@@ -61,6 +61,8 @@ if (NINTENDO_SWITCH)
     target_link_libraries(equinox-pcsx-rearmed PRIVATE
         ${PCSX_LIB} SDL2_ttf SDL2 freetype harfbuzz freetype png bz2 z EGL glapi drm_nouveau nx)
 
+    target_compile_definitions(equinox-pcsx-rearmed PRIVATE EQX_APP_VERSION="${APP_VERSION}")
+
     nx_generate_nacp(equinox-pcsx-rearmed.nacp NAME "${APP_TITLE}" AUTHOR "${APP_AUTHOR}" VERSION "${APP_VERSION}")
     nx_create_nro(equinox-pcsx-rearmed NACP equinox-pcsx-rearmed.nacp ICON ${APP_ICON}
         ROMFS ${CMAKE_CURRENT_SOURCE_DIR}/romfs)
